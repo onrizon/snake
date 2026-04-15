@@ -9,13 +9,16 @@ import {
   randomLetter,
 } from "../lib/dictionary";
 
-const CELL = 28;
 const COLS = 18;
 const ROWS = 18;
-const WIDTH = CELL * COLS;
-const HEIGHT = CELL * ROWS;
-const SPEED = 130;
+const SPEED = 130; // starting ms/tick
 const TILE_COUNT = 12;
+
+function computeCell() {
+  if (typeof window === "undefined") return 28;
+  const maxW = Math.min(window.innerWidth - 32, window.innerHeight - 260);
+  return Math.max(16, Math.min(28, Math.floor(maxW / COLS)));
+}
 
 function initialSnake() {
   const cx = Math.floor(COLS / 2);
@@ -55,18 +58,32 @@ export default function SnakeGame() {
   const canvasRef = useRef(null);
   const stateRef = useRef(null);
   const dictRef = useRef(null);
+  const cellRef = useRef(28);
+  const speedRef = useRef(SPEED);
 
   const [dictReady, setDictReady] = useState(false);
   const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(0);
   const [mistakes, setMistakes] = useState(0);
   const [buffer, setBuffer] = useState("");
   const [foundWords, setFoundWords] = useState([]);
   const [flash, setFlash] = useState(null);
   const [gameOver, setGameOver] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [speed, setSpeed] = useState(SPEED);
+  const [canvasSize, setCanvasSize] = useState({ w: 504, h: 504 });
+
+  function updateSpeed(currentScore) {
+    const newSpeed = Math.max(60, SPEED - Math.floor(currentScore / 100) * 3);
+    if (newSpeed !== speedRef.current) {
+      speedRef.current = newSpeed;
+      setSpeed(newSpeed);
+    }
+  }
 
   function reset() {
     const snake = initialSnake();
+    speedRef.current = SPEED;
     stateRef.current = {
       snake,
       direction: { x: 1, y: 0 },
@@ -74,6 +91,8 @@ export default function SnakeGame() {
       letters: initialLetters(snake),
       buffer: "",
       foundInRun: new Set(),
+      score: 0,
+      floatingLabels: [],
     };
     setScore(0);
     setMistakes(0);
@@ -82,6 +101,7 @@ export default function SnakeGame() {
     setFlash(null);
     setGameOver(false);
     setPaused(false);
+    setSpeed(SPEED);
   }
 
   function triggerFlash(kind) {
@@ -94,27 +114,31 @@ export default function SnakeGame() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const st = stateRef.current;
+    const CELL = cellRef.current;
+    const W = CELL * COLS;
+    const H = CELL * ROWS;
+
     if (!st) {
       ctx.fillStyle = "#0b1220";
-      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      ctx.fillRect(0, 0, W, H);
       return;
     }
-    const { snake, letters, buffer: buf } = st;
+    const { snake, letters, buffer: buf, floatingLabels } = st;
 
     ctx.fillStyle = "#0b1220";
-    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillRect(0, 0, W, H);
 
     ctx.strokeStyle = "#111a2e";
     for (let i = 1; i < COLS; i++) {
       ctx.beginPath();
       ctx.moveTo(i * CELL, 0);
-      ctx.lineTo(i * CELL, HEIGHT);
+      ctx.lineTo(i * CELL, H);
       ctx.stroke();
     }
     for (let i = 1; i < ROWS; i++) {
       ctx.beginPath();
       ctx.moveTo(0, i * CELL);
-      ctx.lineTo(WIDTH, i * CELL);
+      ctx.lineTo(W, i * CELL);
       ctx.stroke();
     }
 
@@ -147,6 +171,20 @@ export default function SnakeGame() {
       ctx.fillStyle = i === 0 ? "#22c55e" : "#16a34a";
       ctx.fillRect(s.x * CELL + 1, s.y * CELL + 1, CELL - 2, CELL - 2);
     }
+
+    // Floating score labels
+    const now = Date.now();
+    st.floatingLabels = floatingLabels.filter((l) => now - l.born < 900);
+    ctx.font = `bold 13px ui-monospace, Menlo, monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    for (const lbl of st.floatingLabels) {
+      const age = (now - lbl.born) / 900;
+      ctx.globalAlpha = 1 - age;
+      ctx.fillStyle = "#86efac";
+      ctx.fillText(lbl.text, lbl.x, lbl.y - age * 35);
+    }
+    ctx.globalAlpha = 1;
   }
 
   function commitBuffer() {
@@ -156,7 +194,9 @@ export default function SnakeGame() {
     if (dict && isWord(dict, st.buffer) && st.buffer.length >= 2 && !st.foundInRun.has(st.buffer)) {
       const pts = wordScore(st.buffer);
       st.foundInRun.add(st.buffer);
-      setScore((s) => s + pts);
+      st.score += pts;
+      setScore(st.score);
+      updateSpeed(st.score);
       setFoundWords((fw) => [{ word: st.buffer, pts }, ...fw].slice(0, 8));
       triggerFlash("good");
     }
@@ -184,6 +224,11 @@ export default function SnakeGame() {
       next.y >= ROWS ||
       st.snake.some((s) => s.x === next.x && s.y === next.y)
     ) {
+      const best = parseInt(localStorage.getItem("snake_best") || "0");
+      if (st.score > best) {
+        localStorage.setItem("snake_best", st.score);
+        setHighScore(st.score);
+      }
       setGameOver(true);
       return;
     }
@@ -198,18 +243,29 @@ export default function SnakeGame() {
 
       st.buffer = st.buffer + eaten.ch;
       const dict = dictRef.current;
+      const CELL = cellRef.current;
 
       if (dict && isWord(dict, st.buffer) && st.buffer.length >= 2 && !st.foundInRun.has(st.buffer)) {
         const pts = wordScore(st.buffer);
         st.foundInRun.add(st.buffer);
-        setScore((s) => s + pts);
+        st.score += pts;
+        setScore(st.score);
+        updateSpeed(st.score);
         setFoundWords((fw) => [{ word: st.buffer, pts }, ...fw].slice(0, 8));
         triggerFlash("good");
+        st.floatingLabels.push({
+          text: `+${pts} ${st.buffer}`,
+          x: next.x * CELL + CELL / 2,
+          y: next.y * CELL,
+          born: Date.now(),
+        });
       }
 
       if (dict && !isPrefix(dict, st.buffer)) {
         const penalty = 3 * st.buffer.length;
-        setScore((s) => s - penalty);
+        st.score = Math.max(0, st.score - penalty);
+        setScore(st.score);
+        updateSpeed(st.score);
         setMistakes((m) => m + 1);
         triggerFlash("bad");
         st.buffer = "";
@@ -224,12 +280,15 @@ export default function SnakeGame() {
     draw();
   }
 
+  // Load dictionary + restore high score
   useEffect(() => {
     let cancelled = false;
     loadDictionary().then((d) => {
       if (cancelled) return;
       dictRef.current = d;
       setDictReady(true);
+      const saved = parseInt(localStorage.getItem("snake_best") || "0");
+      setHighScore(saved);
       reset();
       draw();
     });
@@ -238,23 +297,41 @@ export default function SnakeGame() {
     };
   }, []);
 
+  // Responsive canvas: recalculate cell size on mount and resize
   useEffect(() => {
-    function onKey(e) {
-      const keyMap = {
-        ArrowUp: { x: 0, y: -1 },
-        ArrowDown: { x: 0, y: 1 },
-        ArrowLeft: { x: -1, y: 0 },
-        ArrowRight: { x: 1, y: 0 },
-        w: { x: 0, y: -1 },
-        s: { x: 0, y: 1 },
-        a: { x: -1, y: 0 },
-        d: { x: 1, y: 0 },
-        W: { x: 0, y: -1 },
-        S: { x: 0, y: 1 },
-        A: { x: -1, y: 0 },
-        D: { x: 1, y: 0 },
-      };
+    function updateSize() {
+      const cell = computeCell();
+      cellRef.current = cell;
+      setCanvasSize({ w: cell * COLS, h: cell * ROWS });
+    }
+    updateSize();
+    window.addEventListener("resize", updateSize);
+    return () => window.removeEventListener("resize", updateSize);
+  }, []);
 
+  // Redraw after canvas resizes
+  useEffect(() => {
+    draw();
+  }, [canvasSize]);
+
+  // Keyboard + touch controls
+  useEffect(() => {
+    const keyMap = {
+      ArrowUp: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 },
+      ArrowLeft: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 },
+      w: { x: 0, y: -1 },
+      s: { x: 0, y: 1 },
+      a: { x: -1, y: 0 },
+      d: { x: 1, y: 0 },
+      W: { x: 0, y: -1 },
+      S: { x: 0, y: 1 },
+      A: { x: -1, y: 0 },
+      D: { x: 1, y: 0 },
+    };
+
+    function onKey(e) {
       if (e.key === "Enter") {
         if (gameOver) {
           reset();
@@ -273,15 +350,42 @@ export default function SnakeGame() {
         stateRef.current.nextDirection = keyMap[e.key];
       }
     }
+
+    let touchStart = null;
+    function onTouchStart(e) {
+      const t = e.touches[0];
+      touchStart = { x: t.clientX, y: t.clientY };
+    }
+    function onTouchEnd(e) {
+      if (!touchStart || !stateRef.current) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - touchStart.x;
+      const dy = t.clientY - touchStart.y;
+      touchStart = null;
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return; // tap, ignore
+      if (Math.abs(dx) > Math.abs(dy)) {
+        stateRef.current.nextDirection = { x: dx > 0 ? 1 : -1, y: 0 };
+      } else {
+        stateRef.current.nextDirection = { x: 0, y: dy > 0 ? 1 : -1 };
+      }
+    }
+
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
   }, [gameOver]);
 
+  // Game loop — restarts when speed changes
   useEffect(() => {
     if (!dictReady || gameOver || paused) return;
-    const id = setInterval(tick, SPEED);
+    const id = setInterval(tick, speed);
     return () => clearInterval(id);
-  }, [dictReady, gameOver, paused]);
+  }, [dictReady, gameOver, paused, speed]);
 
   const border =
     flash === "good"
@@ -305,6 +409,7 @@ export default function SnakeGame() {
         }}
       >
         <span>Score: {score}</span>
+        {highScore > 0 && <span style={{ color: "#fbbf24" }}>Best: {highScore}</span>}
         <span>Misses: {mistakes}</span>
         <span>Words: {foundWords.length}</span>
       </div>
@@ -323,14 +428,15 @@ export default function SnakeGame() {
       <div style={{ position: "relative", display: "inline-block" }}>
         <canvas
           ref={canvasRef}
-          width={WIDTH}
-          height={HEIGHT}
+          width={canvasSize.w}
+          height={canvasSize.h}
           style={{
             display: "block",
             border,
             borderRadius: 6,
             background: "#0b1220",
             transition: "border-color 120ms",
+            touchAction: "none",
           }}
         />
         {!dictReady && (
@@ -404,7 +510,7 @@ export default function SnakeGame() {
         <span style={{ color: "#fca5a5" }}>miss</span>.
       </p>
       <p style={{ marginTop: "0.25rem", fontSize: "0.8rem", color: "#64748b" }}>
-        Arrows / WASD · Enter commit · Space pause
+        Arrows / WASD · Enter commit · Space pause · Swipe on mobile
       </p>
     </div>
   );
