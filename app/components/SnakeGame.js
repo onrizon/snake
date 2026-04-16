@@ -11,13 +11,34 @@ import {
 
 const COLS = 18;
 const ROWS = 18;
-const SPEED = 130; // starting ms/tick
+const SPEED = 130;
 const TILE_COUNT = 12;
 
 function computeCell() {
   if (typeof window === "undefined") return 28;
-  const maxW = Math.min(window.innerWidth - 32, window.innerHeight - 260);
-  return Math.max(16, Math.min(28, Math.floor(maxW / COLS)));
+  const availW = window.innerWidth - 16;
+  const availH = window.innerHeight - 280;
+  return Math.max(14, Math.floor(Math.min(availW, availH) / COLS));
+}
+
+// Rounded rect helper (with native fallback)
+function rr(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
 }
 
 function initialSnake() {
@@ -117,74 +138,163 @@ export default function SnakeGame() {
     const CELL = cellRef.current;
     const W = CELL * COLS;
     const H = CELL * ROWS;
+    const PAD = Math.max(2, Math.floor(CELL * 0.1));
+    const TW = CELL - PAD * 2;
+    const R = Math.max(3, Math.floor(TW * 0.25));
 
-    if (!st) {
-      ctx.fillStyle = "#0b1220";
-      ctx.fillRect(0, 0, W, H);
-      return;
-    }
-    const { snake, letters, buffer: buf, floatingLabels } = st;
-
-    ctx.fillStyle = "#0b1220";
+    // ── Background gradient ──────────────────────────────────────────
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, "#0f0520");
+    bg.addColorStop(0.5, "#0a1535");
+    bg.addColorStop(1, "#180830");
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    ctx.strokeStyle = "#111a2e";
+    if (!st) return;
+    const { snake, letters, buffer: buf, floatingLabels } = st;
+
+    // ── Grid ─────────────────────────────────────────────────────────
+    ctx.strokeStyle = "rgba(255,255,255,0.035)";
+    ctx.lineWidth = 1;
     for (let i = 1; i < COLS; i++) {
-      ctx.beginPath();
-      ctx.moveTo(i * CELL, 0);
-      ctx.lineTo(i * CELL, H);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(i * CELL, 0); ctx.lineTo(i * CELL, H); ctx.stroke();
     }
     for (let i = 1; i < ROWS; i++) {
-      ctx.beginPath();
-      ctx.moveTo(0, i * CELL);
-      ctx.lineTo(W, i * CELL);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i * CELL); ctx.lineTo(W, i * CELL); ctx.stroke();
     }
 
+    // ── Letter tiles ─────────────────────────────────────────────────
     const dict = dictRef.current;
-    ctx.font = `bold ${CELL - 8}px ui-monospace, Menlo, monospace`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
     for (const l of letters) {
-      let bg = "#1e293b";
-      let fg = "#e2e8f0";
+      const x = l.x * CELL + PAD;
+      const y = l.y * CELL + PAD;
+      let isP = false, isW = false;
       if (dict && buf) {
-        const candidate = buf + l.ch;
-        if (isPrefix(dict, candidate)) {
-          bg = "#164e63";
-          fg = "#e0f2fe";
-          if (isWord(dict, candidate) && candidate.length >= 2) {
-            bg = "#14532d";
-            fg = "#dcfce7";
-          }
+        const cand = buf + l.ch;
+        if (isPrefix(dict, cand)) {
+          isP = true;
+          if (isWord(dict, cand) && cand.length >= 2) isW = true;
         }
       }
-      ctx.fillStyle = bg;
-      ctx.fillRect(l.x * CELL + 2, l.y * CELL + 2, CELL - 4, CELL - 4);
-      ctx.fillStyle = fg;
+
+      ctx.save();
+
+      // Drop shadow / glow
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = isW || isP ? 0 : 2;
+      ctx.shadowBlur = isW ? 16 : isP ? 12 : 5;
+      ctx.shadowColor = isW
+        ? "rgba(74,222,128,0.65)"
+        : isP
+        ? "rgba(34,211,238,0.55)"
+        : "rgba(0,0,0,0.55)";
+
+      // Tile body
+      const tg = ctx.createLinearGradient(x, y, x, y + TW);
+      if (isW) {
+        tg.addColorStop(0, "#0f5a28"); tg.addColorStop(1, "#062714");
+      } else if (isP) {
+        tg.addColorStop(0, "#0e4a5c"); tg.addColorStop(1, "#062530");
+      } else {
+        tg.addColorStop(0, "#2e1b6e"); tg.addColorStop(1, "#180d40");
+      }
+      ctx.fillStyle = tg;
+      rr(ctx, x, y, TW, TW, R);
+      ctx.fill();
+
+      // Top highlight (plastic sheen)
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+      const hl = ctx.createLinearGradient(x, y, x, y + TW * 0.55);
+      hl.addColorStop(0, isW
+        ? "rgba(74,222,128,0.2)"
+        : isP
+        ? "rgba(34,211,238,0.2)"
+        : "rgba(255,255,255,0.15)");
+      hl.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = hl;
+      rr(ctx, x, y, TW, TW, R);
+      ctx.fill();
+
+      // Border
+      ctx.strokeStyle = isW
+        ? "rgba(74,222,128,0.45)"
+        : isP
+        ? "rgba(34,211,238,0.4)"
+        : "rgba(255,255,255,0.1)";
+      ctx.lineWidth = 1;
+      rr(ctx, x, y, TW, TW, R);
+      ctx.stroke();
+
+      ctx.restore();
+
+      // Letter glyph
+      ctx.save();
+      ctx.font = `800 ${Math.max(11, CELL - 9)}px system-ui,-apple-system,sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      if (isW || isP) {
+        ctx.shadowColor = isW ? "#4ade80" : "#22d3ee";
+        ctx.shadowBlur = 8;
+      }
+      ctx.fillStyle = isW ? "#86efac" : isP ? "#67e8f9" : "#ddd6fe";
       ctx.fillText(l.ch, l.x * CELL + CELL / 2, l.y * CELL + CELL / 2 + 1);
+      ctx.restore();
     }
 
-    for (let i = 0; i < snake.length; i++) {
+    // ── Snake ────────────────────────────────────────────────────────
+    for (let i = snake.length - 1; i >= 0; i--) {
       const s = snake[i];
-      ctx.fillStyle = i === 0 ? "#22c55e" : "#16a34a";
-      ctx.fillRect(s.x * CELL + 1, s.y * CELL + 1, CELL - 2, CELL - 2);
+      const x = s.x * CELL + PAD;
+      const y = s.y * CELL + PAD;
+      const isHead = i === 0;
+
+      ctx.save();
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = isHead ? 0 : 1;
+      ctx.shadowBlur = isHead ? 18 : 7;
+      ctx.shadowColor = isHead ? "rgba(74,222,128,0.8)" : "rgba(34,197,94,0.35)";
+
+      const sg = ctx.createLinearGradient(x, y, x + TW, y + TW);
+      if (isHead) {
+        sg.addColorStop(0, "#4ade80");
+        sg.addColorStop(1, "#15803d");
+      } else {
+        const fade = Math.max(0.45, 1 - i / (snake.length * 1.5));
+        sg.addColorStop(0, `rgba(34,197,94,${fade})`);
+        sg.addColorStop(1, `rgba(21,128,61,${fade * 0.8})`);
+      }
+      ctx.fillStyle = sg;
+      rr(ctx, x, y, TW, TW, R);
+      ctx.fill();
+
+      // Shine
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+      const sh = ctx.createLinearGradient(x, y, x, y + TW * 0.55);
+      sh.addColorStop(0, "rgba(255,255,255,0.22)");
+      sh.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = sh;
+      rr(ctx, x, y, TW, TW, R);
+      ctx.fill();
+
+      ctx.restore();
     }
 
-    // Floating score labels
+    // ── Floating labels ──────────────────────────────────────────────
     const now = Date.now();
     st.floatingLabels = floatingLabels.filter((l) => now - l.born < 900);
-    ctx.font = `bold 13px ui-monospace, Menlo, monospace`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
     for (const lbl of st.floatingLabels) {
       const age = (now - lbl.born) / 900;
-      ctx.globalAlpha = 1 - age;
-      ctx.fillStyle = "#86efac";
-      ctx.fillText(lbl.text, lbl.x, lbl.y - age * 35);
+      ctx.save();
+      ctx.globalAlpha = Math.pow(1 - age, 1.4);
+      ctx.font = `800 ${Math.max(11, CELL - 5)}px system-ui,-apple-system,sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
+      ctx.shadowColor = "rgba(253,224,71,0.9)";
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = "#fde047";
+      ctx.fillText(lbl.text, lbl.x, lbl.y - age * 42);
+      ctx.restore();
     }
-    ctx.globalAlpha = 1;
   }
 
   function commitBuffer() {
@@ -218,10 +328,7 @@ export default function SnakeGame() {
     const next = { x: head.x + st.direction.x, y: head.y + st.direction.y };
 
     if (
-      next.x < 0 ||
-      next.y < 0 ||
-      next.x >= COLS ||
-      next.y >= ROWS ||
+      next.x < 0 || next.y < 0 || next.x >= COLS || next.y >= ROWS ||
       st.snake.some((s) => s.x === next.x && s.y === next.y)
     ) {
       const best = parseInt(localStorage.getItem("snake_best") || "0");
@@ -280,7 +387,6 @@ export default function SnakeGame() {
     draw();
   }
 
-  // Load dictionary + restore high score
   useEffect(() => {
     let cancelled = false;
     loadDictionary().then((d) => {
@@ -292,12 +398,9 @@ export default function SnakeGame() {
       reset();
       draw();
     });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Responsive canvas: recalculate cell size on mount and resize
   useEffect(() => {
     function updateSize() {
       const cell = computeCell();
@@ -309,65 +412,38 @@ export default function SnakeGame() {
     return () => window.removeEventListener("resize", updateSize);
   }, []);
 
-  // Redraw after canvas resizes
-  useEffect(() => {
-    draw();
-  }, [canvasSize]);
+  useEffect(() => { draw(); }, [canvasSize]);
 
-  // Keyboard + touch controls
   useEffect(() => {
     const keyMap = {
-      ArrowUp: { x: 0, y: -1 },
-      ArrowDown: { x: 0, y: 1 },
-      ArrowLeft: { x: -1, y: 0 },
-      ArrowRight: { x: 1, y: 0 },
-      w: { x: 0, y: -1 },
-      s: { x: 0, y: 1 },
-      a: { x: -1, y: 0 },
-      d: { x: 1, y: 0 },
-      W: { x: 0, y: -1 },
-      S: { x: 0, y: 1 },
-      A: { x: -1, y: 0 },
-      D: { x: 1, y: 0 },
+      ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 },
+      ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 },
+      w: { x: 0, y: -1 }, s: { x: 0, y: 1 },
+      a: { x: -1, y: 0 }, d: { x: 1, y: 0 },
+      W: { x: 0, y: -1 }, S: { x: 0, y: 1 },
+      A: { x: -1, y: 0 }, D: { x: 1, y: 0 },
     };
 
     function onKey(e) {
       if (e.key === "Enter") {
-        if (gameOver) {
-          reset();
-        } else {
-          commitBuffer();
-          draw();
-        }
+        if (gameOver) reset(); else { commitBuffer(); draw(); }
         return;
       }
-      if (e.key === " ") {
-        e.preventDefault();
-        if (!gameOver) setPaused((p) => !p);
-        return;
-      }
-      if (keyMap[e.key] && stateRef.current) {
-        stateRef.current.nextDirection = keyMap[e.key];
-      }
+      if (e.key === " ") { e.preventDefault(); if (!gameOver) setPaused((p) => !p); return; }
+      if (keyMap[e.key] && stateRef.current) stateRef.current.nextDirection = keyMap[e.key];
     }
 
     let touchStart = null;
-    function onTouchStart(e) {
-      const t = e.touches[0];
-      touchStart = { x: t.clientX, y: t.clientY };
-    }
+    function onTouchStart(e) { const t = e.touches[0]; touchStart = { x: t.clientX, y: t.clientY }; }
     function onTouchEnd(e) {
       if (!touchStart || !stateRef.current) return;
       const t = e.changedTouches[0];
-      const dx = t.clientX - touchStart.x;
-      const dy = t.clientY - touchStart.y;
+      const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
       touchStart = null;
-      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return; // tap, ignore
-      if (Math.abs(dx) > Math.abs(dy)) {
-        stateRef.current.nextDirection = { x: dx > 0 ? 1 : -1, y: 0 };
-      } else {
-        stateRef.current.nextDirection = { x: 0, y: dy > 0 ? 1 : -1 };
-      }
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      stateRef.current.nextDirection = Math.abs(dx) > Math.abs(dy)
+        ? { x: dx > 0 ? 1 : -1, y: 0 }
+        : { x: 0, y: dy > 0 ? 1 : -1 };
     }
 
     window.addEventListener("keydown", onKey);
@@ -380,51 +456,71 @@ export default function SnakeGame() {
     };
   }, [gameOver]);
 
-  // Game loop — restarts when speed changes
   useEffect(() => {
     if (!dictReady || gameOver || paused) return;
     const id = setInterval(tick, speed);
     return () => clearInterval(id);
   }, [dictReady, gameOver, paused, speed]);
 
-  const border =
-    flash === "good"
-      ? "2px solid #22c55e"
-      : flash === "bad"
-      ? "2px solid #ef4444"
-      : "2px solid #334155";
+  const canvasShadow = flash === "good"
+    ? "0 0 0 2px #4ade80, 0 0 24px rgba(74,222,128,0.45)"
+    : flash === "bad"
+    ? "0 0 0 2px #f87171, 0 0 24px rgba(248,113,113,0.45)"
+    : "0 0 0 1px rgba(255,255,255,0.08), 0 8px 40px rgba(0,0,0,0.5)";
+
+  const glass = {
+    background: "rgba(255,255,255,0.06)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    border: "1px solid rgba(255,255,255,0.11)",
+    boxShadow: "0 4px 24px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1)",
+  };
 
   return (
-    <div style={{ textAlign: "center", width: "100%", maxWidth: 640 }}>
-      <h1 style={{ margin: "0 0 0.5rem", fontSize: "1.5rem" }}>Word Snake</h1>
-      <div
-        style={{
-          display: "flex",
-          gap: "1.5rem",
-          justifyContent: "center",
-          marginBottom: "0.5rem",
-          fontVariantNumeric: "tabular-nums",
-          fontSize: "0.9rem",
-          color: "#cbd5e1",
-        }}
-      >
-        <span>Score: {score}</span>
-        {highScore > 0 && <span style={{ color: "#fbbf24" }}>Best: {highScore}</span>}
-        <span>Misses: {mistakes}</span>
-        <span>Words: {foundWords.length}</span>
+    <div style={{ textAlign: "center", width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.45rem" }}>
+
+      {/* Title */}
+      <h1 style={{
+        margin: 0,
+        fontSize: "1.6rem",
+        fontWeight: 900,
+        letterSpacing: "-0.03em",
+        background: "linear-gradient(135deg, #a78bfa 0%, #60a5fa 50%, #f0abfc 100%)",
+        WebkitBackgroundClip: "text",
+        WebkitTextFillColor: "transparent",
+        backgroundClip: "text",
+        filter: "drop-shadow(0 0 12px rgba(167,139,250,0.4))",
+      }}>Word Snake</h1>
+
+      {/* Score bar */}
+      <div style={{
+        display: "flex", gap: "1.25rem", alignItems: "center",
+        padding: "0.35rem 1.1rem", borderRadius: 999,
+        fontVariantNumeric: "tabular-nums", fontSize: "0.82rem", fontWeight: 700,
+        color: "#e2e8f0", ...glass,
+      }}>
+        <span>⭐ {score}</span>
+        {highScore > 0 && <span style={{ color: "#fbbf24", textShadow: "0 0 8px rgba(251,191,36,0.5)" }}>🏆 {highScore}</span>}
+        <span style={{ color: "#f87171" }}>✗ {mistakes}</span>
+        <span style={{ color: "#86efac" }}>W {foundWords.length}</span>
       </div>
-      <div
-        style={{
-          minHeight: "2.2rem",
-          marginBottom: "0.5rem",
-          fontFamily: "ui-monospace, Menlo, monospace",
-          fontSize: "1.4rem",
-          letterSpacing: "0.2em",
-          color: "#fde047",
-        }}
-      >
-        {buffer || <span style={{ color: "#475569" }}>buffer empty</span>}
+
+      {/* Buffer */}
+      <div style={{
+        minHeight: "2.4rem", width: "100%", maxWidth: canvasSize.w,
+        padding: "0.35rem 0.75rem", borderRadius: 12,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "ui-monospace, Menlo, monospace",
+        fontSize: "1.4rem", letterSpacing: "0.2em", fontWeight: 800,
+        color: buffer ? "#fde047" : "#4c3d7a",
+        textShadow: buffer ? "0 0 16px rgba(253,224,71,0.6)" : "none",
+        ...glass,
+        transition: "color 150ms",
+      }}>
+        {buffer || "· · ·"}
       </div>
+
+      {/* Canvas */}
       <div style={{ position: "relative", display: "inline-block" }}>
         <canvas
           ref={canvasRef}
@@ -432,84 +528,88 @@ export default function SnakeGame() {
           height={canvasSize.h}
           style={{
             display: "block",
-            border,
-            borderRadius: 6,
-            background: "#0b1220",
-            transition: "border-color 120ms",
+            borderRadius: 14,
+            boxShadow: canvasShadow,
+            transition: "box-shadow 150ms",
             touchAction: "none",
           }}
         />
+
+        {/* Loading */}
         {!dictReady && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "rgba(15, 23, 42, 0.85)",
-              fontSize: "1rem",
-            }}
-          >
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 14,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+            background: "rgba(10,5,30,0.8)", backdropFilter: "blur(16px)",
+            fontSize: "0.95rem", fontWeight: 600, color: "#a78bfa",
+          }}>
+            <span style={{ fontSize: "1.6rem" }}>📖</span>
             Loading dictionary…
           </div>
         )}
+
+        {/* Pause / Game Over */}
         {dictReady && (gameOver || paused) && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "rgba(15, 23, 42, 0.8)",
-              fontSize: "1.1rem",
-              fontWeight: 600,
-              textAlign: "center",
-              padding: "1rem",
-            }}
-          >
-            {gameOver
-              ? `Game Over — score ${score}, ${foundWords.length} words. Press Enter to restart.`
-              : "Paused — press Space to resume."}
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 14,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "0.6rem",
+            background: "rgba(8,4,24,0.78)", backdropFilter: "blur(18px)",
+            padding: "1.5rem",
+          }}>
+            {gameOver ? (
+              <>
+                <span style={{ fontSize: "2rem" }}>💀</span>
+                <p style={{ margin: 0, fontWeight: 800, fontSize: "1.1rem", color: "#f87171", lineHeight: 1.3 }}>Game Over</p>
+                <p style={{ margin: 0, fontSize: "0.85rem", color: "#cbd5e1" }}>
+                  Score <strong style={{ color: "#fde047" }}>{score}</strong> · {foundWords.length} words
+                </p>
+                <div style={{
+                  marginTop: "0.4rem", padding: "0.45rem 1.4rem", borderRadius: 999,
+                  background: "linear-gradient(135deg, #7c3aed, #4f46e5)",
+                  boxShadow: "0 4px 20px rgba(124,58,237,0.5)",
+                  color: "#fff", fontWeight: 800, fontSize: "0.9rem",
+                  cursor: "pointer",
+                }}>↵ Play Again</div>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: "2rem" }}>⏸</span>
+                <p style={{ margin: 0, fontWeight: 800, fontSize: "1rem", color: "#a78bfa" }}>Paused</p>
+                <p style={{ margin: 0, fontSize: "0.8rem", color: "#94a3b8" }}>Press Space to resume</p>
+              </>
+            )}
           </div>
         )}
       </div>
-      <div
-        style={{
-          marginTop: "0.75rem",
-          fontSize: "0.85rem",
-          color: "#cbd5e1",
-          minHeight: "3rem",
-        }}
-      >
+
+      {/* Found words */}
+      <div style={{ maxWidth: canvasSize.w, width: "100%", minHeight: "2.2rem" }}>
         {foundWords.length === 0 ? (
-          <span style={{ color: "#64748b" }}>No words yet</span>
+          <span style={{ fontSize: "0.8rem", color: "#4c3d7a", fontWeight: 600 }}>No words yet</span>
         ) : (
           foundWords.map((w, i) => (
-            <span
-              key={i}
-              style={{
-                display: "inline-block",
-                margin: "0.15rem 0.3rem",
-                padding: "0.2rem 0.5rem",
-                background: "#14532d",
-                color: "#dcfce7",
-                borderRadius: 4,
-                fontFamily: "ui-monospace, Menlo, monospace",
-              }}
-            >
-              {w.word} <span style={{ color: "#86efac" }}>+{w.pts}</span>
+            <span key={i} style={{
+              display: "inline-block", margin: "0.15rem 0.2rem",
+              padding: "0.2rem 0.55rem", borderRadius: 999,
+              background: "linear-gradient(135deg, rgba(21,128,61,0.75), rgba(20,83,45,0.75))",
+              backdropFilter: "blur(8px)",
+              color: "#dcfce7", fontSize: "0.78rem", fontWeight: 700,
+              fontFamily: "ui-monospace, Menlo, monospace",
+              border: "1px solid rgba(74,222,128,0.3)",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+            }}>
+              {w.word} <span style={{ color: "#4ade80" }}>+{w.pts}</span>
             </span>
           ))
         )}
       </div>
-      <p style={{ marginTop: "0.75rem", fontSize: "0.8rem", color: "#94a3b8", maxWidth: 560, marginInline: "auto" }}>
-        Eat letters to build words. Tiles glow <span style={{ color: "#67e8f9" }}>cyan</span> if they extend a valid
-        prefix and <span style={{ color: "#86efac" }}>green</span> if they complete a word. Dead-end prefix ={" "}
-        <span style={{ color: "#fca5a5" }}>miss</span>.
+
+      {/* Instructions */}
+      <p style={{ margin: 0, fontSize: "0.75rem", color: "#6b5fa0", fontWeight: 500, maxWidth: canvasSize.w }}>
+        Tiles glow <span style={{ color: "#67e8f9", fontWeight: 700 }}>cyan</span> for prefixes ·{" "}
+        <span style={{ color: "#4ade80", fontWeight: 700 }}>green</span> for words · dead-end = <span style={{ color: "#f87171", fontWeight: 700 }}>miss</span>
       </p>
-      <p style={{ marginTop: "0.25rem", fontSize: "0.8rem", color: "#64748b" }}>
+      <p style={{ margin: 0, fontSize: "0.72rem", color: "#4c3d7a", fontWeight: 500 }}>
         Arrows / WASD · Enter commit · Space pause · Swipe on mobile
       </p>
     </div>
