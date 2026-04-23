@@ -10,7 +10,11 @@ npm run build    # production build
 npm run start    # serve production build
 ```
 
-No test suite or linter is configured.
+Node.js is installed at `~/.local/n/bin/node` (via the `n` version manager). No test suite or linter is configured.
+
+## Dev server
+
+`.claude/launch.json` is configured for `preview_start`. The `runtimeExecutable` points to `~/.local/n/bin/node` because `node` is not on the system PATH.
 
 ## Architecture
 
@@ -20,7 +24,7 @@ Single-page Next.js 14 app (App Router). The entire game lives in one component:
 app/
   components/SnakeGame.js   # all game logic + rendering (~420 lines)
   lib/dictionary.js         # dictionary loading, word validation, scoring, letter pool
-  globals.css               # dark theme, body centering
+  globals.css               # gradient background, body centering
   layout.js / page.js       # thin wrappers
 public/
   enable1.txt               # ENABLE1 Scrabble word list (172 k words, ~1.7 MB)
@@ -58,8 +62,24 @@ High score is persisted to `localStorage` under the key `snake_best`.
 
 ### Canvas rendering
 
-`draw()` redraws the full 18×18 grid on every tick using the 2D Canvas API. Cell size (`cellRef`) is computed from viewport width and recalculated on `resize` — keeps the canvas responsive on mobile.
+`draw()` redraws the full 18×18 grid on every tick using the 2D Canvas API. Cell size (`cellRef`) is computed dynamically:
 
-Letter tiles are highlighted cyan if `buf + tile` is a valid prefix, green if it's a complete word — giving the player visual look-ahead.
+```js
+const availW = window.innerWidth - 16;
+const availH = window.innerHeight - 280;  // subtract UI chrome height
+cell = Math.max(14, Math.floor(Math.min(availW, availH) / COLS));
+```
 
-Floating score labels (`+N WORD`) are stored in `stateRef.floatingLabels`, rendered with decreasing `globalAlpha` over 900 ms, and pruned inside `draw()`.
+A `resize` listener keeps it updated; `canvasSize` state triggers a redraw after the DOM updates.
+
+The `rr(ctx, x, y, w, h, r)` helper draws rounded rectangles with a native `ctx.roundRect` fallback for older browsers.
+
+### Visual design
+
+Premium "playful app store" aesthetic:
+
+- **Background**: deep purple → blue → magenta gradient (`globals.css`)
+- **Tiles**: rounded rect with gradient body, plastic top-highlight, colour-coded glow — neutral (purple), prefix (cyan), word (green)
+- **Snake**: gradient segments with diffuse glow; head has a bright green radial glow
+- **UI chrome**: glassmorphism pill (score bar), frosted-glass card (buffer), gradient-clip title text
+- **Floating labels**: `+N WORD` labels drift upward with `globalAlpha` fade over 900 ms, stored in `stateRef.floatingLabels` and pruned inside `draw()`
